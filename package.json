@@ -1,0 +1,12 @@
+{
+  "name": "forge-core",
+  "version": "1.0.0",
+  "description": "A GitHub-compatible git forge in one process: git smart HTTP, REST v3, GraphQL and MCP over one in-memory store.",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22.18" },
+  "scripts": {
+    "start": "node --experimental-strip-types main.ts"
+  }
+}
