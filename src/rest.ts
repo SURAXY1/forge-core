@@ -631,7 +631,7 @@ function contentsRoute(ctx, repo, rawPath, m) {
     const res = ops.writeFile(repo, path, input, Buffer.from(input.content, 'base64'));
     const branch = ops.branchName(input.branch) || repo.defaultBranch;
     const cj = S.commitJson(base, repo, res.commit);
-    return ok(res.created ? 201 : 200, { content: fileJson(res.path, res.blob, branch, false), commit: { sha: res.commit, node_id: cj.node_id, url: cj.commit.url, html_url: cj.html_url, author: cj.commit.author, committer: cj.commit.committer, tree: cj.commit.tree, message: cj.commit.message, parents: cj.parents, verification: cj.commit.verification } });
+    return ok(res.created ? 201 : 200, { content: fileJson(res.path, res.blob, branch, true), commit: { sha: res.commit, node_id: cj.node_id, url: cj.commit.url, html_url: cj.html_url, author: cj.commit.author, committer: cj.commit.committer, tree: cj.commit.tree, message: cj.commit.message, parents: cj.parents, verification: cj.commit.verification } });
   }
   if (m === 'DELETE') {
     const input = jsonBody(ctx);
