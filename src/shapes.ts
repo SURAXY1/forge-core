@@ -18,24 +18,13 @@ export function userJson(base, login) {
     for (let i = 0; i < login.length; i++) id = (id * 31 + login.charCodeAt(i)) % 900000;
     id += 2000;
   }
-  const api = base + '/api/v3/users/' + login;
   u = {
     login,
     id,
     node_id: Buffer.from('04:User' + id).toString('base64'),
     avatar_url: base + '/avatars/u/' + id,
-    gravatar_id: '',
-    url: api,
+    url: base + '/api/v3/users/' + login,
     html_url: base + '/' + login,
-    followers_url: api + '/followers',
-    following_url: api + '/following{/other_user}',
-    gists_url: api + '/gists{/gist_id}',
-    starred_url: api + '/starred{/owner}{/repo}',
-    subscriptions_url: api + '/subscriptions',
-    organizations_url: api + '/orgs',
-    repos_url: api + '/repos',
-    events_url: api + '/events{/privacy}',
-    received_events_url: api + '/received_events',
     type: isOrg ? 'Organization' : 'User',
     site_admin: false,
   };
@@ -147,9 +136,7 @@ export function issueJson(base, r, it) {
   const out = {
     url: api + '/issues/' + it.number,
     repository_url: api,
-    labels_url: api + '/issues/' + it.number + '/labels{/name}',
     comments_url: api + '/issues/' + it.number + '/comments',
-    events_url: api + '/issues/' + it.number + '/events',
     html_url: base + '/' + r.fullName + '/' + kind + '/' + it.number,
     id: it.id,
     node_id: it.nodeId,
@@ -169,9 +156,6 @@ export function issueJson(base, r, it) {
     author_association: 'OWNER',
     active_lock_reason: null,
     body: it.body,
-    reactions: { url: api + '/issues/' + it.number + '/reactions', total_count: 0 },
-    timeline_url: api + '/issues/' + it.number + '/timeline',
-    performed_via_github_app: null,
     state_reason: it.pull ? null : it.stateReason,
   };
   if (it.pull) {

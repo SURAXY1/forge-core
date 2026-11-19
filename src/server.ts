@@ -41,12 +41,13 @@ function send(res, status, type, body, extra) {
     headers.push('Content-Type', type, 'Content-Length', typeof body === 'string' ? Buffer.byteLength(body) : body.length);
   }
   if (extra) for (let i = 0; i < extra.length; i++) headers.push(extra[i]);
+  res.sendDate = false;
   res.writeHead(status, headers);
   if (status === 204 || status === 304 || res.req.method === 'HEAD') res.end();
   else res.end(body);
 }
 
-const API_HEADERS = ['X-GitHub-Media-Type', 'github.v3; format=json', 'X-GitHub-Api-Version-Selected', '2022-11-28', 'X-OAuth-Scopes', 'repo, read:org', 'X-Accepted-OAuth-Scopes', '', 'X-RateLimit-Limit', '5000', 'X-RateLimit-Remaining', '4999', 'X-RateLimit-Used', '1', 'X-RateLimit-Resource', 'core'];
+const API_HEADERS = ['X-GitHub-Media-Type', 'github.v3; format=json', 'X-OAuth-Scopes', 'repo, read:org'];
 
 function sendError(res, status, message, errors) {
   const body = { message, documentation_url: 'https://docs.github.com/rest', status: String(status) };

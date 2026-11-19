@@ -126,16 +126,39 @@ function fetchCmd(repo, args) {
   let depth = 0;
   let done = false;
   let waitForDone = false;
+  let relative = false;
   for (const a of args) {
     if (a.startsWith('want ')) wants.push(a.slice(5, 45));
     else if (a.startsWith('have ')) haves.push(a.slice(5, 45));
     else if (a.startsWith('shallow ')) clientShallow.add(a.slice(8, 48));
     else if (a.startsWith('deepen ')) depth = parseInt(a.slice(7), 10) || 0;
+    else if (a === 'deepen-relative') relative = true;
     else if (a === 'done') done = true;
     else if (a === 'wait-for-done') waitForDone = true;
   }
   for (const w of wants) {
     if (!objects.has(w)) return Buffer.concat([pkt('ERR upload-pack: not our ref ' + w + '\n'), FLUSH]);
+  }
+  if (relative && depth > 0 && clientShallow.size) {
+    // Measure how deep the client's boundary sits below the wants, then extend past it.
+    let level = wants.map((w) => peel(objects, w)).filter(Boolean);
+    const seenLevel = new Set(level);
+    let n = 1;
+    let deepest = 0;
+    while (level.length && n < 100000) {
+      const next = [];
+      for (const oid of level) {
+        if (clientShallow.has(oid)) {
+          deepest = n;
+          continue;
+        }
+        const c = getCommit(objects, oid);
+        if (c) for (const p of c.parents) if (!seenLevel.has(p)) { seenLevel.add(p); next.push(p); }
+      }
+      level = next;
+      n++;
+    }
+    depth += deepest;
   }
   const parts = [];
   const common = haves.filter((h) => objects.has(h));
@@ -290,16 +313,16 @@ export function uploadPack(repo, body) {
   const delim = items.indexOf('delim');
   const args = delim < 0 ? [] : items.slice(delim + 1);
   const command = first.slice(8);
-  if (command === 'ls-refs') return gitReply(200, type, lsRefs(repo, args));
-  if (command === 'fetch') {
+  if (command === 'ls-refs' || command === 'fetch') {
+    // Identical requests against unchanged refs get the identical bytes back.
     const key = body.latin1Slice();
     let hit = repo.fetchCache && repo.fetchCache.get(key);
     if (!hit) {
-      hit = fetchCmd(repo, args);
+      hit = gitReply(200, type, command === 'fetch' ? fetchCmd(repo, args) : lsRefs(repo, args));
       if (!repo.fetchCache) repo.fetchCache = new Map();
       if (repo.fetchCache.size < 64) repo.fetchCache.set(key, hit);
     }
-    return gitReply(200, type, hit);
+    return hit;
   }
   return gitReply(200, type, Buffer.concat([pkt('ERR unknown command ' + command + '\n'), FLUSH]));
 }
