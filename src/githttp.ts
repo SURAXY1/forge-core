@@ -307,6 +307,7 @@ export function uploadPack(repo, body) {
   }
   const items = parsed.items.map((s) => (s.endsWith('\n') ? s.slice(0, -1) : s));
   const first = items[0] || '';
+  if (items.length === 0) return gitReply(200, type, Buffer.alloc(0));
   if (!first.startsWith('command=')) {
     return { status: 400, type: 'text/plain', body: 'upload-pack: only protocol version 2 is served (send Git-Protocol: version=2)\n' };
   }
@@ -351,7 +352,8 @@ export function receivePack(repo, body) {
     if (!m) return { status: 400, type: 'text/plain', body: 'malformed receive-pack command\n' };
     commands.push({ old: m[1], neu: m[2], ref: m[3] });
   }
-  if (commands.length === 0) return { status: 400, type: 'text/plain', body: 'receive-pack: no commands\n' };
+  // git probes with a lone flush packet before a chunked upload; that is an empty, successful exchange.
+  if (commands.length === 0) return gitReply(200, type, Buffer.alloc(0));
   const objects = repo.objects;
   let unpack = 'ok';
   const packBytes = body.subarray(parsed.next);

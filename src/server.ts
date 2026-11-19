@@ -1,5 +1,5 @@
 // HTTP front door: authentication, body collection and dispatch to REST, GraphQL, MCP and git smart HTTP.
-import { createServer } from 'node:http';
+import { createHttpServer } from './httpd.ts';
 import { gunzipSync, inflateSync } from 'node:zlib';
 import { ApiError, findRepo } from './store.ts';
 import { handleRest } from './rest.ts';
@@ -37,14 +37,8 @@ const JSON_TYPE = 'application/json; charset=utf-8';
 function send(res, status, type, body, extra) {
   const id = SEED + ':' + (++requestSeq).toString(16).toUpperCase().padStart(8, '0');
   const headers = ['X-GitHub-Request-Id', id];
-  if (status !== 204 && status !== 304) {
-    headers.push('Content-Type', type, 'Content-Length', typeof body === 'string' ? Buffer.byteLength(body) : body.length);
-  }
   if (extra) for (let i = 0; i < extra.length; i++) headers.push(extra[i]);
-  res.sendDate = false;
-  res.writeHead(status, headers);
-  if (status === 204 || status === 304 || res.req.method === 'HEAD') res.end();
-  else res.end(body);
+  return { status, type, body, headers };
 }
 
 const API_HEADERS = ['X-GitHub-Media-Type', 'github.v3; format=json', 'X-OAuth-Scopes', 'repo, read:org'];
@@ -52,11 +46,11 @@ const API_HEADERS = ['X-GitHub-Media-Type', 'github.v3; format=json', 'X-OAuth-S
 function sendError(res, status, message, errors) {
   const body = { message, documentation_url: 'https://docs.github.com/rest', status: String(status) };
   if (errors) body.errors = errors;
-  send(res, status, JSON_TYPE, JSON.stringify(body), status === 401 ? ['WWW-Authenticate', 'Basic realm="forge-core"'] : undefined);
+  return send(res, status, JSON_TYPE, JSON.stringify(body), status === 401 ? ['WWW-Authenticate', 'Basic realm="forge-core"'] : undefined);
 }
 
-function decodeBody(req, chunks) {
-  let body = chunks.length === 1 ? chunks[0] : Buffer.concat(chunks);
+function decodeBody(req) {
+  let body = req.body;
   const enc = req.headers['content-encoding'];
   if (enc && body.length) {
     if (/gzip/i.test(enc)) body = gunzipSync(body);
@@ -84,10 +78,9 @@ function splitSegs(path) {
 function gitRoute(req, res, path, queryText, body) {
   // /{owner}/{repo}[.git]/info/refs | git-upload-pack | git-receive-pack
   const m = /^\/([^/]+)\/([^/]+?)(?:\.git)?\/(info\/refs|git-upload-pack|git-receive-pack)$/.exec(path);
-  if (!m) return false;
+  if (!m) return null;
   if (!authorized(req.headers.authorization)) {
-    send(res, 401, 'text/plain', 'Authentication required\n', ['WWW-Authenticate', 'Basic realm="forge-core"']);
-    return true;
+    return send(res, 401, 'text/plain', 'Authentication required\n', ['WWW-Authenticate', 'Basic realm="forge-core"']);
   }
   let owner = m[1];
   let name = m[2];
@@ -97,8 +90,7 @@ function gitRoute(req, res, path, queryText, body) {
   } catch {}
   const repo = findRepo(owner, name);
   if (!repo) {
-    send(res, 404, 'text/plain', 'Repository not found.\n');
-    return true;
+    return send(res, 404, 'text/plain', 'Repository not found.\n');
   }
   let out;
   if (m[3] === 'info/refs') {
@@ -109,11 +101,11 @@ function gitRoute(req, res, path, queryText, body) {
   } else if (req.method !== 'POST') out = { status: 405, type: 'text/plain', body: 'method not allowed\n' };
   else if (m[3] === 'git-upload-pack') out = uploadPack(repo, body);
   else out = receivePack(repo, body);
-  send(res, out.status, out.type, out.body, out.headers);
-  return true;
+  return send(res, out.status, out.type, out.body, out.headers);
 }
 
-function dispatch(req, res, chunks) {
+function dispatch(req) {
+  const res = null;
   const url = req.url || '/';
   const q = url.indexOf('?');
   const path = q < 0 ? url : url.slice(0, q);
@@ -127,11 +119,12 @@ function dispatch(req, res, chunks) {
     if (!isApi && !isGql && !isMcp) {
       let body;
       try {
-        body = decodeBody(req, chunks);
+        body = decodeBody(req);
       } catch {
         return send(res, 400, 'text/plain', 'request body could not be decoded\n');
       }
-      if (gitRoute(req, res, path, queryText, body)) return;
+      const git = gitRoute(req, res, path, queryText, body);
+      if (git) return git;
       if (!authorized(req.headers.authorization)) return sendError(res, 401, 'Requires authentication');
       return sendError(res, 404, 'Not Found');
     }
@@ -141,7 +134,7 @@ function dispatch(req, res, chunks) {
     }
     let body;
     try {
-      body = decodeBody(req, chunks);
+      body = decodeBody(req);
     } catch {
       return sendError(res, 400, 'Problems parsing JSON');
     }
@@ -157,34 +150,13 @@ function dispatch(req, res, chunks) {
     }
     const ctx = { method, path, segs: splitSegs(path.slice(7)), query: new URLSearchParams(queryText), body, base };
     const out = handleRest(ctx);
-    send(res, out.status, JSON_TYPE, out.body, out.headers ? API_HEADERS.concat(out.headers) : API_HEADERS);
+    return send(res, out.status, JSON_TYPE, out.body, out.headers ? API_HEADERS.concat(out.headers) : API_HEADERS);
   } catch (e) {
     if (e instanceof ApiError) return sendError(res, e.status, e.message, e.extra);
-    if (!res.headersSent) sendError(res, 500, 'Internal error: ' + String((e && e.message) || e));
-    else res.end();
+    return sendError(res, 500, 'Internal error: ' + String((e && e.message) || e));
   }
 }
 
 export function startServer() {
-  const server = createServer({ keepAlive: true, noDelay: true }, (req, res) => {
-    if (req.method === 'GET' || req.method === 'HEAD') {
-      // No body to wait for: answer on this tick and let the stream drain itself.
-      req.resume();
-      dispatch(req, res, []);
-      return;
-    }
-    const chunks = [];
-    req.on('data', (c) => chunks.push(c));
-    req.on('end', () => dispatch(req, res, chunks));
-    req.on('error', () => {
-      if (!res.headersSent) sendError(res, 400, 'request aborted');
-    });
-  });
-  server.keepAliveTimeout = 120000;
-  server.headersTimeout = 125000;
-  server.requestTimeout = 0;
-  server.on('clientError', (err, socket) => {
-    if (socket.writable) socket.end('HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nX-GitHub-Request-Id: ' + SEED + ':0\r\nConnection: close\r\nContent-Length: 25\r\n\r\n{"message":"Bad Request"}');
-  });
-  return server;
+  return createHttpServer(dispatch);
 }
